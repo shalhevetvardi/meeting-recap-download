@@ -2,8 +2,12 @@
 """Fail unless index.html has exactly one accessibility-statement link.
 
 The link must point to the exact statement URL, carry the exact text
-"הצהרת נגישות", and have no target attribute. Run from the repo root.
+"הצהרת נגישות", and have no target attribute.
+It also fails if a CSS rule whose selector names a `.footer` class sets `opacity`:
+opacity dims footer text below the 4.5:1 WCAG AA contrast.
+Run from the repo root.
 """
+import re
 import sys
 from html.parser import HTMLParser
 
@@ -31,10 +35,24 @@ class Collector(HTMLParser):
             self._open = None
 
 
+def footer_opacity_problems(source):
+    """Return one problem per CSS rule naming a `.footer` class that sets opacity."""
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", source, re.S | re.I))
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    problems = []
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if ".footer" not in selector:
+            continue
+        if re.search(r"(?:^|;)\s*opacity\s*:", body.strip(), re.I):
+            problems.append("CSS rule %r sets opacity, which dims footer text below 4.5:1 contrast" % " ".join(selector.split()))
+    return problems
+
+
 def main():
     with open("index.html", encoding="utf-8") as f:
-        collector = Collector()
-        collector.feed(f.read())
+        source = f.read()
+    collector = Collector()
+    collector.feed(source)
     matches = [a for a in collector.anchors if a["attrs"].get("href") == URL]
     problems = []
     if len(matches) != 1:
@@ -44,6 +62,7 @@ def main():
             problems.append("anchor text is %r, expected %r" % (a["text"], TEXT))
         if a["has_target"]:
             problems.append("anchor has a target attribute")
+    problems.extend(footer_opacity_problems(source))
     if problems:
         for p in problems:
             print("check-a11y-link: FAIL - " + p)
